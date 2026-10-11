@@ -1,0 +1,13 @@
+# Normalize to LF in the repo; check out native on each platform.
+* text=auto eol=lf
+
+# Windows batch must stay CRLF.
+*.bat text eol=crlf
+
+# The POSIX wrapper script must stay LF even on Windows checkouts.
+gradlew text eol=lf
+
+# Binary assets.
+*.jar binary
+*.png binary
+*.keystore binary

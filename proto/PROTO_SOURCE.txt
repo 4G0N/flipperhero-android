@@ -1,0 +1,1 @@
+Next-Flip/flipperzero-protobuf @ ea4f185f5eaa265955c520eae2832887ee6aa5e4 (Momentum fork; matched to generated .pb.swift by field-number parity)

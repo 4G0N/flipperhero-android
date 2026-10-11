@@ -1,0 +1,26 @@
+# Gradle / build output
+build/
+.gradle/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Machine-specific SDK location (set via local.properties or ANDROID_HOME)
+local.properties
+
+# Claude Code local settings (user-specific)
+.claude/
+
+# Upstream iOS sources, cloned locally for reference only — NOT part of this project.
+# (github.com/flipper-hero/ios-app; see PROTO_SOURCE.txt / README for how it's used.)
+ios-app/
+upstream-proto/
+fork-try/
+
+# OS cruft
+.DS_Store
+Thumbs.db
