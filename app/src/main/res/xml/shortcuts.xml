@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AOSP App Shortcuts only (long-press the launcher icon). No Google Assistant / App Actions. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="scan"
+        android:enabled="true"
+        android:shortcutShortLabel="@string/shortcut_scan">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.flipperhero.app"
+            android:targetClass="com.flipperhero.app.MainActivity" />
+    </shortcut>
+</shortcuts>

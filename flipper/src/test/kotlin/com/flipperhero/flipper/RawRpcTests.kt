@@ -22,4 +22,14 @@ class RawRpcTests {
         val client = flipper.client()
         assertThrowsSuspend<FlipperException.Rpc> { client.rawRpc("""{}""") }
     }
+
+    @Test
+    fun rawRpcAlsoAcceptsFlatCanonicalProtoJson(): Unit = runBlocking {
+        // The ported schema documents {"content":{...}}, but canonical proto3 JSON flattens oneofs.
+        // The bridge accepts both so the escape hatch is not silently mis-specced against either shape.
+        val flipper = SimulatedFlipper()
+        val client = flipper.client()
+        val response = client.rawRpc("""{"systemPingRequest":{}}""")
+        assertTrue(response.contains("empty"), response)
+    }
 }

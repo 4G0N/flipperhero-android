@@ -20,3 +20,4 @@ rootProject.name = "FlipperHero"
 include(":proto")
 include(":flipper")
 include(":agent")
+include(":app")

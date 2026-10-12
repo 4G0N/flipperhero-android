@@ -27,10 +27,14 @@ the UI and Android platform layer are next.
 | 0 | Read & understand the iOS sources | ✅ |
 | 1 | Protobuf regenerated for Kotlin (protobuf-java) | ✅ |
 | 2b | `:flipper` RPC/framing/device model + simulator, green on the JVM | ✅ |
-| 2a | Real-device BLE round-trip (needs hardware) | ⏳ pending hardware |
 | 3 | `:agent` safety core (risk, approval, engagement, fencing, audit, LLM) | ✅ |
-| 4 | Compose UI (Chat / Device / Files / Settings / Remote) | ⏳ |
-| 5 | Android platform adapters (BLE, Keystore, notifications, speech…) | ⏳ |
+| 4 | Compose UI (Chat / Device / Files / Remote / Settings) | ✅ code complete |
+| 5 | Android platform adapters (BLE, Keystore, notifications, speech…) | ✅ code complete |
+| 2a | Real-device BLE round-trip + proto wire-parity (needs hardware) | ⏳ pending hardware checkpoint |
+
+Deferred for v1 (stubs/notes, called out honestly): camera attach (CameraX), home-screen
+widgets (Glance), and firmware-update-over-BLE. Voice input/TTS are present but degrade to text
+when no provider exists (the GrapheneOS case).
 
 **111 JVM tests pass** (`./gradlew :flipper:test :agent:test`), including the ported acceptance
 suites — PolicyTests, PermissionTests, EngagementTests, ExecutorTests — plus safety-invariant,
