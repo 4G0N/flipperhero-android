@@ -12,7 +12,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
+import com.flipperhero.app.BuildConfig
 import com.flipperhero.flipper.Transport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -75,21 +77,27 @@ class AndroidBleTransport(
     private val bondChannel = Channel<Int>(Channel.CONFLATED)
     private var bondReceiver: BroadcastReceiver? = null
 
+    private fun log(message: String) { if (BuildConfig.DEBUG) Log.d(TAG, message) }
+
     // ---- Public connect handshake -------------------------------------------------------------
 
     /** Runs the full connect/bond/MTU/subscribe handshake and returns this transport, ready. */
     suspend fun connect(timeoutMs: Long = 60_000): Transport {
         val result = withTimeoutOrNull(timeoutMs) {
+            log("connect() start addr=${device.address} bondState=${device.bondState}")
             registerBondReceiver()
             connectGattWithRetry()
             negotiateMtu()
+            log("MTU negotiated = $mtu (chunk = ${mtu - 3})")
             discoverServices()
             bindCharacteristics()
+            log("characteristics bound; enabling notifications")
             // Subscribing to the authenticated characteristics is what triggers bonding.
             enableNotifyWithBond(requireChar(FlipperGatt.FLOW_CONTROL))
             enableNotifyWithBond(requireChar(FlipperGatt.SERIAL_READ))
             primeFlowControl()
             ready = true
+            log("connect() ready")
             this@AndroidBleTransport
         }
         if (result == null) {
@@ -141,15 +149,15 @@ class AndroidBleTransport(
     }
 
     private fun bindCharacteristics() {
-        val service = gatt?.getService(FlipperGatt.SERVICE) ?: throw BleError.ServiceMissing
+        val service = gatt?.getService(FlipperGatt.SERVICE)
+        log("serial service present = ${service != null}; all services = ${gatt?.services?.map { it.uuid }}")
+        if (service == null) throw BleError.ServiceMissing
         // Only the three allowed characteristics are looked up; the status characteristic is left alone.
         serialWrite = service.getCharacteristic(FlipperGatt.SERIAL_WRITE)
-        if (service.getCharacteristic(FlipperGatt.SERIAL_READ) == null ||
-            serialWrite == null ||
-            service.getCharacteristic(FlipperGatt.FLOW_CONTROL) == null
-        ) {
-            throw BleError.ServiceMissing
-        }
+        val read = service.getCharacteristic(FlipperGatt.SERIAL_READ)
+        val flow = service.getCharacteristic(FlipperGatt.FLOW_CONTROL)
+        log("props: serialRead=${read?.properties} serialWrite=${serialWrite?.properties} flowControl=${flow?.properties} (NOTIFY=0x10 INDICATE=0x20 WRITE=0x08 WRITE_NR=0x04 READ=0x02)")
+        if (read == null || serialWrite == null || flow == null) throw BleError.ServiceMissing
     }
 
     private fun requireChar(uuid: java.util.UUID): BluetoothGattCharacteristic =
@@ -158,8 +166,18 @@ class AndroidBleTransport(
     /** Enables notifications, bonding first if needed and retrying the CCCD write after BOND_BONDED. */
     private suspend fun enableNotifyWithBond(characteristic: BluetoothGattCharacteristic) {
         val g = gatt ?: throw BleError.Disconnected
-        g.setCharacteristicNotification(characteristic, true)
+        val setOk = g.setCharacteristicNotification(characteristic, true)
         val cccd = characteristic.getDescriptor(FlipperGatt.CCCD) ?: throw BleError.ServiceMissing
+        // Match the characteristic: NOTIFY -> 0x0100, INDICATE -> 0x0200. iOS's setNotifyValue picks
+        // this automatically; on Android we must, or the firmware sends nothing despite a clean write.
+        val useIndication = (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_NOTIFY == 0) &&
+            (characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0)
+        val cccdValue = if (useIndication) {
+            BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+        } else {
+            BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        }
+        log("enableNotify ${characteristic.uuid} setNotify=$setOk props=${characteristic.properties} useIndication=$useIndication bondState=${device.bondState}")
 
         // The CCCD lives on an authenticated characteristic, so the write needs a bond. Establish it
         // up front when absent, then write; retry once more if the first write is rejected and a bond
@@ -167,7 +185,8 @@ class AndroidBleTransport(
         if (device.bondState != BluetoothDevice.BOND_BONDED) ensureBonded()
 
         repeat(2) { attempt ->
-            val status = writeDescriptor(cccd)
+            val status = writeDescriptor(cccd, cccdValue)
+            log("enableNotify ${characteristic.uuid} CCCD write attempt=$attempt status=$status")
             if (status == BluetoothGatt.GATT_SUCCESS) return
             if (device.bondState != BluetoothDevice.BOND_BONDED) {
                 ensureBonded()
@@ -200,18 +219,23 @@ class AndroidBleTransport(
     private suspend fun primeFlowControl() {
         // A read of the flow-control characteristic yields the first credit value => ready to send.
         val value = readCharacteristic(requireChar(FlipperGatt.FLOW_CONTROL))
-        creditGate.supply(FlowControl.parseCredits(value))
+        val credits = FlowControl.parseCredits(value)
+        log("primeFlowControl: ${value.size} bytes -> $credits credits")
+        creditGate.supply(credits)
     }
 
     // ---- Transport -----------------------------------------------------------------------------
 
     override suspend fun send(data: ByteArray) {
+        log("send ${data.size} bytes")
         var offset = 0
         while (offset < data.size) {
             val n = creditGate.reserve(data.size - offset, mtu)
+            log("send chunk offset=$offset n=$n")
             writeChunk(data.copyOfRange(offset, offset + n))
             offset += n
         }
+        log("send complete (${data.size} bytes)")
     }
 
     override suspend fun close() {
@@ -232,11 +256,10 @@ class AndroidBleTransport(
         if (status != BluetoothGatt.GATT_SUCCESS) throw BleError.Underlying("write failed ($status)")
     }
 
-    private suspend fun writeDescriptor(descriptor: BluetoothGattDescriptor): Int = gattLock.withLock {
+    private suspend fun writeDescriptor(descriptor: BluetoothGattDescriptor, value: ByteArray): Int = gattLock.withLock {
         val g = gatt ?: throw BleError.Disconnected
         val deferred = CompletableDeferred<Int>()
         descWriteResult = deferred
-        val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
         val ok = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             g.writeDescriptor(descriptor, value) == BluetoothGatt.GATT_SUCCESS
         } else {
@@ -283,6 +306,7 @@ class AndroidBleTransport(
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            log("onConnectionStateChange status=$status newState=$newState ready=$ready")
             if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
                 connectionResult?.complete(Unit)
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -302,14 +326,17 @@ class AndroidBleTransport(
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            log("onServicesDiscovered status=$status")
             servicesResult?.complete(status)
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            log("onDescriptorWrite ${descriptor.characteristic?.uuid} status=$status")
             descWriteResult?.complete(status)
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            log("onCharacteristicWrite ${characteristic.uuid} status=$status")
             if (characteristic.uuid == FlipperGatt.SERIAL_WRITE) charWriteResult?.complete(status)
         }
 
@@ -340,11 +367,13 @@ class AndroidBleTransport(
 
     private fun routeNotification(uuid: java.util.UUID, value: ByteArray) {
         when (uuid) {
-            FlipperGatt.SERIAL_READ -> incomingChannel.trySend(value)
+            FlipperGatt.SERIAL_READ -> incomingChannel.trySend(value) // per-frame; not logged (flood)
             FlipperGatt.FLOW_CONTROL -> {
-                if (value.size >= 4) scope.launch { creditGate.supply(FlowControl.parseCredits(value)) }
+                val credits = if (value.size >= 4) FlowControl.parseCredits(value) else -1
+                log("notify FLOW_CONTROL ${value.size} bytes -> credits=$credits")
+                if (value.size >= 4) scope.launch { creditGate.supply(credits) }
             }
-            // FORBIDDEN_STATUS and anything else: ignore.
+            else -> log("notify OTHER $uuid ${value.size} bytes")
         }
     }
 
@@ -394,5 +423,9 @@ class AndroidBleTransport(
         runCatching { gatt?.close() }
         gatt = null
         scope.cancel()
+    }
+
+    private companion object {
+        const val TAG = "FlipperBLE"
     }
 }

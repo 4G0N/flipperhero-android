@@ -30,7 +30,7 @@ the UI and Android platform layer are next.
 | 3 | `:agent` safety core (risk, approval, engagement, fencing, audit, LLM) | ✅ |
 | 4 | Compose UI (Chat / Device / Files / Remote / Settings) | ✅ code complete |
 | 5 | Android platform adapters (BLE, Keystore, notifications, speech…) | ✅ code complete |
-| 2a | Real-device BLE round-trip + proto wire-parity (needs hardware) | ⏳ pending hardware checkpoint |
+| 2a | Real-device BLE round-trip + proto wire-parity | ✅ verified on a Pixel 9a (GrapheneOS) + Momentum Flipper |
 
 Deferred for v1 (stubs/notes, called out honestly): camera attach (CameraX), home-screen
 widgets (Glance), and firmware-update-over-BLE. Voice input/TTS are present but degrade to text
