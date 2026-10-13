@@ -21,6 +21,7 @@ dependencies {
     api(libs.coroutines.core)
     implementation(libs.okhttp)
     implementation(libs.gson)
+    implementation(libs.anthropic)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

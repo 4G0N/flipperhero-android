@@ -1,6 +1,8 @@
 package com.flipperhero.agent
 
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -32,14 +34,14 @@ class FapHubClient(
     private val base: String = "https://catalog.flipperzero.one/api/v0",
     private val client: OkHttpClient = catalogHttp,
 ) {
-    private fun get(path: String, query: Map<String, String>): ByteArray {
+    private suspend fun get(path: String, query: Map<String, String>): ByteArray = withContext(Dispatchers.IO) {
         val url = base.toHttpUrl().newBuilder().apply {
             path.split("/").filter { it.isNotEmpty() }.forEach { addPathSegment(it) }
             query.forEach { (k, v) -> addQueryParameter(k, v) }
         }.build()
         client.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (response.code !in 200..299) throw CatalogError.Http(response.code)
-            return response.body?.bytes() ?: throw CatalogError.Malformed
+            response.body?.bytes() ?: throw CatalogError.Malformed
         }
     }
 
@@ -102,17 +104,19 @@ class GitHubClient(private val client: OkHttpClient = catalogHttp) {
         val url = "https://api.github.com/search/code".toHttpUrl().newBuilder()
             .addQueryParameter("q", q).addQueryParameter("per_page", limit.toString()).build()
         val request = Request.Builder().url(url).header("Accept", "application/vnd.github+json").build()
-        client.newCall(request).execute().use { response ->
+        return withContext(Dispatchers.IO) {
+            client.newCall(request).execute().use { response ->
             if (response.code !in 200..299) throw CatalogError.Http(response.code)
             val root = runCatching { JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject }.getOrNull()
                 ?: throw CatalogError.Malformed
             val items = root.getAsJsonArray("items") ?: throw CatalogError.Malformed
-            return items.mapNotNull { element ->
+            items.mapNotNull { element ->
                 val item = element.asJsonObject
                 val path = item.get("path")?.asString ?: return@mapNotNull null
                 val repo = item.getAsJsonObject("repository")?.get("full_name")?.asString ?: return@mapNotNull null
                 val html = item.get("html_url")?.asString ?: return@mapNotNull null
                 Hit(repo, path, html.replace("https://github.com/", "https://raw.githubusercontent.com/").replace("/blob/", "/"))
+            }
             }
         }
     }
@@ -122,11 +126,13 @@ class GitHubClient(private val client: OkHttpClient = catalogHttp) {
         if (url.scheme != "https" || (url.host != "raw.githubusercontent.com" && url.host != "github.com")) {
             throw CatalogError.Malformed
         }
-        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
-            if (response.code !in 200..299) throw CatalogError.Http(response.code)
-            val data = response.body?.bytes() ?: throw CatalogError.Malformed
-            if (data.size > MAX_DOWNLOAD_BYTES) throw CatalogError.TooLarge(data.size)
-            return data
+        return withContext(Dispatchers.IO) {
+            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                if (response.code !in 200..299) throw CatalogError.Http(response.code)
+                val data = response.body?.bytes() ?: throw CatalogError.Malformed
+                if (data.size > MAX_DOWNLOAD_BYTES) throw CatalogError.TooLarge(data.size)
+                data
+            }
         }
     }
 

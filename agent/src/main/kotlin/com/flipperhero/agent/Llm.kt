@@ -4,6 +4,8 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -80,7 +82,8 @@ data class ChatCompletionsClient(
             }
             m.toolCallID?.let { d.addProperty("tool_call_id", it) }
             if (m.role == ChatRole.ASSISTANT) {
-                for ((key, value) in m.reasoning) d.add(key, value.toElement())
+                // Anthropic's stored content blocks mean nothing to an OpenAI-shape provider.
+                for ((key, value) in m.reasoning) if (key != AnthropicClient.CONTENT_KEY) d.add(key, value.toElement())
             }
             wireMessages.add(d)
         }
@@ -123,12 +126,15 @@ data class ChatCompletionsClient(
             .header("X-Title", "FlipperHero")
             .post(makeRequestBody(messages, tools).toRequestBody("application/json".toMediaType()))
             .build()
-        http.newCall(request).execute().use { response ->
-            if (response.code !in 200..299) {
-                // Error bodies can echo a credential. Only expose the status.
-                throw ProviderError.Status(response.code)
+        // OkHttp execute() blocks; keep it off the caller's thread (e.g. the Android main thread).
+        return withContext(Dispatchers.IO) {
+            http.newCall(request).execute().use { response ->
+                if (response.code !in 200..299) {
+                    // Error bodies can echo a credential. Only expose the status.
+                    throw ProviderError.Status(response.code)
+                }
+                parseResponse(response.body?.string().orEmpty())
             }
-            return parseResponse(response.body?.string().orEmpty())
         }
     }
 

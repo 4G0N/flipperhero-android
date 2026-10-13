@@ -4,12 +4,15 @@ import android.content.Context
 import com.flipperhero.agent.AIProvider
 import com.flipperhero.agent.AppControls
 import com.flipperhero.agent.AuditSink
-import com.flipperhero.agent.ChatCompletionsClient
+import com.flipperhero.agent.ChatMessage
 import com.flipperhero.agent.DeviceProfileStore
 import com.flipperhero.agent.FapHubClient
 import com.flipperhero.agent.FileAuditLog
 import com.flipperhero.agent.FirmwareUpdateChecker
 import com.flipperhero.agent.GitHubClient
+import com.flipperhero.agent.LLMClient
+import com.flipperhero.agent.ProviderAPI
+import com.flipperhero.agent.ToolSpec
 import com.flipperhero.app.approval.ComposeApprover
 import com.flipperhero.app.ble.FlipperScanner
 import com.flipperhero.app.platform.AndroidSpeechProvider
@@ -41,16 +44,27 @@ class AppContainer(context: Context) {
     val gitHub = GitHubClient()
     val firmwareChecker = FirmwareUpdateChecker()
 
-    /** Builds the chat/forge LLM client from the current provider, model, base URL and stored key. */
-    fun llm(): ChatCompletionsClient {
-        val provider = AIProvider.fromId(settings.provider) ?: AIProvider.OPENROUTER
-        val base = settings.apiBaseURL.trimEnd('/')
-        return ChatCompletionsClient(
-            apiKey = secrets.apiKey(settings.provider) ?: "",
-            model = settings.model,
-            endpoint = "$base/chat/completions",
-            provider = provider,
-        )
+    /**
+     * The chat/forge LLM client. It follows Settings: provider, model, base URL and stored key are
+     * re-read on every request, so a key or model saved mid-session takes effect on the next message
+     * instead of the session carrying the values it was connected with. The underlying client is
+     * rebuilt only when one of them changes. Built through [ProviderAPI] so the base URL is checked
+     * against the provider's own hosts.
+     */
+    val llm: LLMClient = object : LLMClient {
+        private var config: List<String>? = null
+        private var client: LLMClient? = null
+
+        @Synchronized
+        private fun current(): LLMClient {
+            val wanted = listOf(settings.provider, settings.model, settings.apiBaseURL, secrets.apiKey(settings.provider) ?: "")
+            client?.takeIf { config == wanted }?.let { return it }
+            val provider = AIProvider.fromId(wanted[0]) ?: AIProvider.OPENROUTER
+            return ProviderAPI(provider, wanted[2], wanted[3]).client(wanted[1]).also { client = it; config = wanted }
+        }
+
+        override suspend fun complete(messages: List<ChatMessage>, tools: List<ToolSpec>): ChatMessage =
+            current().complete(messages, tools)
     }
 
     fun appControls(onRestartDevice: suspend () -> Unit): AppControls =

@@ -1,7 +1,11 @@
 package com.flipperhero.app.ui
 
 import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.flipperhero.agent.AgentSession
@@ -16,6 +20,7 @@ import com.flipperhero.app.approval.PendingApproval
 import com.flipperhero.app.ble.AndroidBleTransport
 import com.flipperhero.app.ble.DiscoveredFlipper
 import com.flipperhero.app.di.AppContainer
+import com.flipperhero.app.service.FlipperForegroundService
 import com.flipperhero.flipper.FlipperDirEntry
 import com.flipperhero.flipper.FlipperKey
 import com.flipperhero.flipper.FlipperRpcClient
@@ -29,6 +34,8 @@ import com.flipperhero.flipper.read
 import com.flipperhero.flipper.reboot
 import com.flipperhero.flipper.setDeviceName
 import com.flipperhero.flipper.storageInfo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,7 +94,19 @@ class AppViewModel(private val container: AppContainer, private val appContext: 
     private var session: AgentSession? = null
     private var screenJob: Job? = null
 
+    /** The notification's Stop button: the service has stopped itself; drop the link too. */
+    private val stopReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (client != null) disconnect()
+        }
+    }
+
     init {
+        ContextCompat.registerReceiver(
+            appContext, stopReceiver,
+            IntentFilter(FlipperForegroundService.ACTION_STOP),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         viewModelScope.launch {
             container.scanner.status // touch to surface adapter state lazily
         }
@@ -113,7 +132,7 @@ class AppViewModel(private val container: AppContainer, private val appContext: 
                 rpc.start()
                 client = rpc
                 val controlling = rpc.asControlling()
-                val llm = container.llm()
+                val llm = container.llm
                 val executor = ToolExecutor(
                     flipper = controlling,
                     gate = container.approver,
@@ -140,8 +159,9 @@ class AppViewModel(private val container: AppContainer, private val appContext: 
         viewModelScope.launch {
             screenJob?.cancel(); screenJob = null
             container.approver.cancelAll()
-            runCatching { client?.stop() }
+            val closing = client
             client = null; session = null
+            runCatching { closing?.stop() }
             container.ongoing.stop()
             _connection.value = ConnectionState.Disconnected
         }
@@ -238,7 +258,18 @@ class AppViewModel(private val container: AppContainer, private val appContext: 
 
     override fun onCleared() {
         super.onCleared()
-        viewModelScope.launch { runCatching { client?.stop() } }
+        runCatching { appContext.unregisterReceiver(stopReceiver) }
+        // viewModelScope is already cancelled here, so the link has to be closed on its own scope.
+        // Left open, the foreground service keeps the process (and the GATT connection) alive with
+        // no UI attached, and a connected Flipper stops advertising — the next scan finds nothing.
+        val closing = client
+        client = null; session = null
+        screenJob?.cancel(); screenJob = null
+        container.approver.cancelAll()
+        if (closing != null) {
+            container.ongoing.stop()
+            CoroutineScope(Dispatchers.IO).launch { runCatching { closing.stop() } }
+        }
         container.tts.shutdown()
     }
 }

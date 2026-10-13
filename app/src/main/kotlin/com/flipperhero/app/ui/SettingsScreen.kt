@@ -28,6 +28,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.flipperhero.agent.AIProvider
 import com.flipperhero.agent.EngagementProfile
 
 @Composable
@@ -60,7 +61,21 @@ fun SettingsScreen(vm: AppViewModel) {
 
         Divider()
         Text("AI provider", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(provider, { provider = it; s.provider = it }, label = { Text("Provider id") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(
+            provider,
+            { typed ->
+                val id = typed.trim().lowercase()
+                provider = id; s.provider = id
+                // A known provider brings its own endpoint and default model; a stale pair sends the key nowhere useful.
+                AIProvider.fromId(id)?.let { known ->
+                    baseUrl = known.baseURL; s.apiBaseURL = known.baseURL
+                    model = known.defaultModel; s.model = known.defaultModel
+                    keyStored = vm.secrets.hasApiKey(id)
+                }
+            },
+            label = { Text("Provider id (${AIProvider.entries.joinToString { it.id }})") },
+            modifier = Modifier.fillMaxWidth(),
+        )
         OutlinedTextField(model, { model = it; s.model = it }, label = { Text("Model") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(baseUrl, { baseUrl = it; s.apiBaseURL = it }, label = { Text("API base URL") }, modifier = Modifier.fillMaxWidth())
         Text(if (keyStored) "API key: stored" else "API key: none", style = MaterialTheme.typography.bodySmall)
@@ -72,7 +87,7 @@ fun SettingsScreen(vm: AppViewModel) {
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = "API key, write only" },
         )
         Button(
-            onClick = { vm.secrets.setApiKey(provider, apiKey.ifBlank { null }); keyStored = vm.secrets.hasApiKey(provider); apiKey = "" },
+            onClick = { vm.secrets.setApiKey(provider, apiKey.trim().ifEmpty { null }); keyStored = vm.secrets.hasApiKey(provider); apiKey = "" },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Save key") }
 

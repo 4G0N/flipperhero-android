@@ -1,6 +1,8 @@
 package com.flipperhero.agent
 
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.TimeUnit
@@ -56,10 +58,13 @@ class FirmwareUpdateChecker(private val client: OkHttpClient = defaultClient) {
             .url("https://api.github.com/repos/${distribution.repo}/releases/latest")
             .header("Accept", "application/vnd.github+json")
             .build()
-        client.newCall(request).execute().use { response ->
-            if (response.code !in 200..299) return null
-            val root = runCatching { JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject }.getOrNull() ?: return null
-            return root.get("tag_name")?.asString ?: root.get("name")?.asString
+        return withContext(Dispatchers.IO) {
+            client.newCall(request).execute().use { response ->
+                if (response.code !in 200..299) return@use null
+                val root = runCatching { JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject }.getOrNull()
+                    ?: return@use null
+                root.get("tag_name")?.asString ?: root.get("name")?.asString
+            }
         }
     }
 

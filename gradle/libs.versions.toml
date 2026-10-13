@@ -27,6 +27,7 @@ junit-jupiter = { module = "org.junit.jupiter:junit-jupiter" }
 junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher" }
 okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
 gson = { module = "com.google.code.gson:gson", version = "2.11.0" }
+anthropic = { module = "com.anthropic:anthropic-java", version = "2.34.0" }
 
 # Android (:app)
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }

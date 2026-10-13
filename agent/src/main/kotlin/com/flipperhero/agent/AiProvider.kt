@@ -1,6 +1,8 @@
 package com.flipperhero.agent
 
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URI
@@ -14,7 +16,8 @@ enum class AIProvider(val id: String) {
     ZAI("zai"),
     KIMI("kimi"),
     QWEN("qwen"),
-    MINIMAX("minimax");
+    MINIMAX("minimax"),
+    ANTHROPIC("anthropic");
 
     val displayName: String
         get() = when (this) {
@@ -26,6 +29,7 @@ enum class AIProvider(val id: String) {
             KIMI -> "Kimi"
             QWEN -> "Qwen Cloud"
             MINIMAX -> "MiniMax"
+            ANTHROPIC -> "Anthropic"
         }
 
     val baseURL: String
@@ -38,6 +42,7 @@ enum class AIProvider(val id: String) {
             KIMI -> "https://api.moonshot.ai/v1"
             QWEN -> "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
             MINIMAX -> "https://api.minimax.io/v1"
+            ANTHROPIC -> "https://api.anthropic.com"
         }
 
     val defaultModel: String
@@ -50,6 +55,7 @@ enum class AIProvider(val id: String) {
             KIMI -> "kimi-k3"
             QWEN -> "qwen-plus"
             MINIMAX -> "MiniMax-M3"
+            ANTHROPIC -> "claude-opus-5-5"
         }
 
     /** Keep keys within the selected provider, including its regional API hosts. */
@@ -76,6 +82,7 @@ enum class AIProvider(val id: String) {
                 "dashscope-intl.aliyuncs.com", "dashscope-us.aliyuncs.com", "dashscope.aliyuncs.com",
             ) || host.endsWith(".maas.aliyuncs.com")
             MINIMAX -> host in listOf("api.minimax.io", "api.minimaxi.com")
+            ANTHROPIC -> host == "api.anthropic.com"
         }
         if (!allowed) throw ProviderError.InvalidEndpoint
         return uri
@@ -93,6 +100,12 @@ sealed class ProviderError(message: String) : Exception(message) {
     object EmptyReply : ProviderError("The model did not reply. Try another model.") { private fun readResolve(): Any = EmptyReply }
     object ModelsUnavailable : ProviderError("No model list is available. Enter a model ID from the provider documentation.") { private fun readResolve(): Any = ModelsUnavailable }
     data class Status(val code: Int) : ProviderError("API request failed (HTTP $code). Check your key, model and account credit.")
+    /** A request the provider rejected as invalid, with its own explanation (credential already redacted). */
+    data class Rejected(val code: Int, val detail: String) : ProviderError("API request rejected (HTTP $code): $detail")
+    /** The provider's safety classifier declined the request; nothing was retried on another model. */
+    data class Refused(val category: String?) : ProviderError(
+        "The model declined this request" + (category?.let { " (safety classifier: $it)" } ?: "") + ". Nothing was sent to another model.",
+    )
 }
 
 data class AIModel(val id: String, val name: String)
@@ -106,17 +119,24 @@ class ProviderAPI(
 ) {
     val baseURL: URI = provider.validatedBaseURL(baseURL)
 
-    fun client(model: String): ChatCompletionsClient =
-        ChatCompletionsClient(apiKey = apiKey, model = model,
-            endpoint = baseURL.toString().trimEnd('/') + "/chat/completions", provider = provider, http = client)
+    fun client(model: String, connectionTest: Boolean = false): LLMClient =
+        if (provider == AIProvider.ANTHROPIC) {
+            AnthropicClient(apiKey, model, baseURL.toString(), connectionTest)
+        } else {
+            ChatCompletionsClient(apiKey = apiKey, model = model,
+                endpoint = baseURL.toString().trimEnd('/') + "/chat/completions", provider = provider,
+                connectionTest = connectionTest, http = client)
+        }
 
     suspend fun models(): List<AIModel> {
         if (apiKey.isEmpty() && provider !in listOf(AIProvider.OPENROUTER, AIProvider.BLACKBIT, AIProvider.ORCAROUTER)) {
             throw ProviderError.MissingKey
         }
+        if (provider == AIProvider.ANTHROPIC) return AnthropicClient(apiKey, "", baseURL.toString()).models()
         val builder = Request.Builder().url(baseURL.toString().trimEnd('/') + "/models")
         if (apiKey.isNotEmpty()) builder.header("Authorization", "Bearer $apiKey")
-        client.newCall(builder.build()).execute().use { response ->
+        return withContext(Dispatchers.IO) {
+            client.newCall(builder.build()).execute().use { response ->
             val status = response.code
             if (status in listOf(404, 405, 501)) throw ProviderError.ModelsUnavailable
             if (status !in 200..299) throw ProviderError.Status(status)
@@ -133,8 +153,9 @@ class ProviderAPI(
                 if (supported != null && !supported.contains("tools")) return@mapNotNull null
                 AIModel(id, obj.get("name")?.asString ?: id)
             }.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
-            if (models.isEmpty()) throw ProviderError.ModelsUnavailable
-            return models
+                if (models.isEmpty()) throw ProviderError.ModelsUnavailable
+                models
+            }
         }
     }
 
@@ -142,7 +163,7 @@ class ProviderAPI(
     suspend fun test(model: String) {
         if (apiKey.isEmpty()) throw ProviderError.MissingKey
         if (model.trim().isEmpty()) throw ProviderError.MissingModel
-        val probe = client(model).copy(connectionTest = true)
+        val probe = client(model, connectionTest = true)
         val reply = probe.complete(listOf(ChatMessage(role = ChatRole.USER, content = "Reply with exactly OK.")), emptyList())
         if ((reply.content ?: "").trim().isEmpty()) throw ProviderError.EmptyReply
     }
