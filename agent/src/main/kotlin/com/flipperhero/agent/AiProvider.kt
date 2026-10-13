@@ -55,7 +55,9 @@ enum class AIProvider(val id: String) {
             KIMI -> "kimi-k3"
             QWEN -> "qwen-plus"
             MINIMAX -> "MiniMax-M3"
-            ANTHROPIC -> "claude-opus-5-5"
+            // Not the newest Opus on purpose: claude-opus-5-5's safety classifier declined even
+            // read-only requests from this app on hardware (see README, "AI providers").
+            ANTHROPIC -> "claude-opus-4-8"
         }
 
     /** Keep keys within the selected provider, including its regional API hosts. */

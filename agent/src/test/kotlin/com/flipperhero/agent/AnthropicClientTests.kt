@@ -73,6 +73,7 @@ class AnthropicClientTests {
     fun providerIsPinnedToItsOwnHost() {
         assertEquals("api.anthropic.com", AIProvider.ANTHROPIC.validatedBaseURL(AIProvider.ANTHROPIC.baseURL).host)
         assertThrows(ProviderError.InvalidEndpoint::class.java) { AIProvider.ANTHROPIC.validatedBaseURL("https://openrouter.ai/api/v1") }
-        assertTrue(ProviderAPI(AIProvider.ANTHROPIC, AIProvider.ANTHROPIC.baseURL, "k").client("claude-opus-5-5") is AnthropicClient)
+        assertTrue(ProviderAPI(AIProvider.ANTHROPIC, AIProvider.ANTHROPIC.baseURL, "k").client(AIProvider.ANTHROPIC.defaultModel) is AnthropicClient)
+        assertEquals("claude-opus-4-8", AIProvider.ANTHROPIC.defaultModel)
     }
 }

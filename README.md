@@ -19,8 +19,9 @@ ran on Android, this is for you.
 
 ## Status
 
-Port in progress, built and reviewed phase by phase. The safety-critical core is done and tested;
-the UI and Android platform layer are next.
+Built and reviewed phase by phase. The safety-critical core, the Compose UI and the Android
+platform layer are all in place, and the app has driven real agent-to-Flipper conversations on
+hardware. It is a sideloaded debug build for now: there is no release signing or store listing.
 
 | Phase | What | State |
 |---|---|---|
@@ -31,13 +32,14 @@ the UI and Android platform layer are next.
 | 4 | Compose UI (Chat / Device / Files / Remote / Settings) | ✅ code complete |
 | 5 | Android platform adapters (BLE, Keystore, notifications, speech…) | ✅ code complete |
 | 2a | Real-device BLE round-trip + proto wire-parity | ✅ verified on a Pixel 9a (GrapheneOS) + Momentum Flipper |
+| 6 | First agent shakedown on hardware (chat → tools → Flipper) | ✅ working with Anthropic `claude-opus-4-8` |
 
 Deferred for v1 (stubs/notes, called out honestly): camera attach (CameraX), home-screen
 widgets (Glance), and firmware-update-over-BLE. Voice input/TTS are present but degrade to text
 when no provider exists (the GrapheneOS case).
 
-**111 JVM tests pass** (`./gradlew :flipper:test :agent:test`), including the ported acceptance
-suites — PolicyTests, PermissionTests, EngagementTests, ExecutorTests — plus safety-invariant,
+**121 JVM tests pass** (`./gradlew :flipper:test :agent:test :app:testDebugUnitTest`), including the
+ported acceptance suites — PolicyTests, PermissionTests, EngagementTests, ExecutorTests — plus safety-invariant,
 TOCTOU and full-stack simulator tests. Those tests are the definition of a faithful port; they are
 the thing to review.
 
@@ -51,7 +53,7 @@ modules are **pure JVM on purpose** (`java-library`, not `com.android.library`) 
 :proto    generated protobuf (protobuf-java), pure JVM
 :flipper  RPC client, framing, device model, and a Transport interface. Pure JVM. (→ :proto)
 :agent    tools, ToolExecutor, RiskAssessor, approval, engagement, audit, LLM providers. Pure JVM. (→ :flipper)
-:app      Android app: Compose UI + the platform implementations of the interfaces above. (not yet built)
+:app      Android app: Compose UI + the platform implementations of the interfaces above.
 ```
 
 Each platform capability is an interface the pure module **defines** and `:app` **implements**:
@@ -73,6 +75,28 @@ The guardrails are the point of the app, and they are ported faithfully, not sim
   and reused, never regenerated between approval and execution (no TOCTOU).
 - **Append-only audit log** of every action and how it was authorized.
 
+## AI providers
+
+Bring your own API key. Pick a provider in Settings by its id; the base URL and default model fill
+in, and each provider's key is only ever sent to that provider's own hosts.
+
+| Provider id | API | Notes |
+|---|---|---|
+| `openrouter` (default), `ai2342`, `blackbit`, `orcarouter`, `zai`, `kimi`, `qwen`, `minimax` | OpenAI-compatible chat completions | Ported from the iOS app. |
+| `anthropic` | Anthropic Messages API (official Java SDK) | Android-only addition. Default model `claude-opus-4-8`. |
+
+- **Keys stay on the device.** A key is written to Android Keystore-backed encrypted storage, is
+  write-only in the UI, is excluded from backups, and is never shown to the model (it only learns
+  whether one is stored).
+- **Refusals are shown, not hidden.** If Anthropic's safety classifier declines a request, the chat
+  says so with the category. Nothing is silently retried on a different model.
+- **Why not the newest Opus:** on hardware, `claude-opus-5-5` declined even a read-only "what
+  firmware is this?" request with category `cyber`; the app's tool list (transmit, emulate, BadUSB)
+  rides along on every call. `claude-opus-4-8` works. You can type any model id in Settings.
+- **Known gap:** the OpenAI-shape providers refuse HTTP redirects so a key cannot be forwarded to
+  another host. The Anthropic SDK's transport does not expose that switch, so that provider relies on
+  host pinning and HTTPS alone.
+
 ## Protobuf
 
 The generated `.pb.swift` in the iOS repo came from the **Momentum** protobuf fork, not upstream
@@ -88,8 +112,19 @@ Needs a JDK 17+ (the Android Studio JBR works) and the Android SDK. The pure cor
 test with no emulator:
 
 ```sh
-./gradlew :flipper:test :agent:test
+./gradlew :flipper:test :agent:test :app:testDebugUnitTest
 ```
+
+Build and sideload the app (USB debugging on; set `sdk.dir` in `local.properties` or `ANDROID_HOME`):
+
+```sh
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+The two instrumented tests need real hardware or network and are not part of the JVM suite:
+`BleSmokeTest` (a Flipper in range, PIN confirmed by hand) and `AnthropicSdkSmokeTest` (network only;
+it uses a deliberately invalid key).
 
 ## Credits & license
 
