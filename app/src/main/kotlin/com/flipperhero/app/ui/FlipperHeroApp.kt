@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Folder
@@ -47,7 +48,7 @@ fun FlipperHeroApp(vm: AppViewModel) {
         when (connection) {
             is ConnectionState.Connected -> MainScaffold(vm)
             is ConnectionState.Connecting -> Column(
-                Modifier.fillMaxSize(),
+                Modifier.fillMaxSize().statusBarsPadding(),
                 verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {

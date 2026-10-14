@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.viewmodel.initializer
@@ -27,6 +28,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Transparent system bars with icon colors that adapt to light/dark; the Compose layer then
+        // insets its own content so nothing sits under the status bar or the camera cutout.
+        enableEdgeToEdge()
         setContent {
             FlipperHeroTheme { FlipperHeroApp(viewModel) }
         }
