@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Cold-start window background, shown before Compose draws; matches the light theme background. -->
+    <color name="window_background">#FFFBF5</color>
+</resources>
