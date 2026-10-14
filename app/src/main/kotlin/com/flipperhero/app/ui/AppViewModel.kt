@@ -145,10 +145,19 @@ class AppViewModel(private val container: AppContainer, private val appContext: 
                     firmwareChecker = container.firmwareChecker,
                     settings = { container.settings.approvalSettings() },
                 )
-                session = AgentSession(llm, executor)
+                val agent = AgentSession(llm, executor)
+                session = agent
                 container.settings.lastDeviceAddress = address
                 container.ongoing.start("Connected to $name")
                 _connection.value = ConnectionState.Connected(name)
+                // Read the device inventory once, now, so the agent starts every conversation knowing
+                // what's saved on it (firmware, apps, /ext/{subghz,nfc,infrared,...}) instead of having
+                // to go discover it inside a single message's step budget. Best-effort and in the
+                // background: a failure here must not break the connection.
+                launch {
+                    val profile = runCatching { container.profileStore.build(controlling) }.getOrNull()
+                    if (profile != null && session === agent) agent.updateProfile(profile)
+                }
             } catch (e: Exception) {
                 _connection.value = ConnectionState.Failed(e.message ?: "Connection failed")
             }

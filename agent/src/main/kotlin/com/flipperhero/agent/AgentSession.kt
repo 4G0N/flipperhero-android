@@ -32,6 +32,8 @@ object AgentPrompts {
 
             Working style:
             - Chain tools proactively: look before you press, read before you write, verify after you act.
+            - Treat the operator's request as a goal, not a single command. When it does not map to one obvious tool, investigate before giving up: list the relevant folders, read candidate files, check installed apps and the inventory, and combine what you find into a plan. Prefer figuring out a path from the tools and saved files you have over asking the operator how to do it. (This is about discovering how to reach the goal, not getting around a block: rule 2 below still holds.)
+            - You have room to take several steps per request; spend them investigating and chaining rather than stopping early to ask.
             - Generate working files when asked: forge_payload knows the exact formats and validates them.
             - Text files on the device (.sub, .ir, .txt) are editable with read_file and write_file; rework signals or scripts directly instead of saying you cannot.
             - For hands-on tasks, end your turn with "Next moves:" and two or three concrete actions you could take. Skip it for simple questions.
@@ -69,6 +71,12 @@ class AgentSession(
     init {
         this.history.add(systemMessage(nonce, profile, engagement))
         this.history.addAll(history.filter { it.role != ChatRole.SYSTEM })
+        // When the agent refreshes device knowledge mid-turn, fold it into the system prompt too.
+        // This fires from inside execute(), under send()'s lock, so it must not take the lock again.
+        executor.onProfileRefreshed = { refreshed ->
+            this.profile = refreshed
+            this@AgentSession.history[0] = systemMessage(nonce, refreshed, engagement)
+        }
     }
 
     private fun systemMessage(nonce: String, profile: DeviceProfile?, engagement: EngagementState): ChatMessage =
@@ -143,7 +151,9 @@ class AgentSession(
         runCatching { ToolInvocation.parse(call.name, call.arguments).summary }.getOrDefault(call.name)
 
     companion object {
-        const val MAX_STEPS = 8
+        // Generous on purpose: the value here is complex, multi-step tasks the operator does not
+    // already know how to do by hand. Each look/list/read spends a step, so exploration needs room.
+    const val MAX_STEPS = 20
         /** Older automatic screen captures are dropped from what is sent, so long sessions stay cheap. */
         const val KEPT_SCREEN_CAPTURES = 2
         const val CAPTURE_MARKER = "[Automatic attachment: Flipper screen capture"
